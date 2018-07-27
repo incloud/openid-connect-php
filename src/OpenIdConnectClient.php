@@ -173,6 +173,13 @@ class OpenIdConnectClient
     public $urlRequester;
 
     /**
+     * The decoded claims
+     *
+     * @var \stdClass
+     */
+    public $claims;
+
+    /**
      * OpenIdConnectClient constructor.
      *
      * @param string[] $provider_args Arguments for OIDC provider setup {
@@ -303,7 +310,7 @@ class OpenIdConnectClient
         }
 
         // Do an OpenID Connect session check
-        if ($_REQUEST['state'] !== $this->getState()) {
+        if (isset($_REQUEST['state']) && $_REQUEST['state'] !== $this->getState()) {
             throw new OpenIdConnectException('Unable to determine session state');
         }
 
@@ -314,7 +321,7 @@ class OpenIdConnectClient
             throw new OpenIdConnectException('User did not authorize openid scope.');
         }
 
-        $claims = $this->decodeJwt($token_json->id_token, 1);
+        $this->claims = $this->decodeJwt($token_json->id_token, 1);
 
         if (!$this->canVerifySignatures()) {
             throw new OpenIdConnectException('JWT signature verification unavailable');
@@ -326,7 +333,7 @@ class OpenIdConnectClient
         }
 
         // Attempt JWT claims verifications
-        if (!$this->verifyJwtClaims($claims, $token_json->access_token)) {
+        if (!$this->verifyJwtClaims($this->claims, $token_json->access_token)) {
             throw new OpenIdConnectException('Unable to verify JWT claims');
         }
 
@@ -778,7 +785,7 @@ class OpenIdConnectClient
             "  <Exponent>%s</Exponent>\r\n" .
             "</RSAKeyValue>";
 
-        $public_key_xml = sprintf($public_key_xml, b64url2b64($key->n), b64url2b64($key->e));
+        $public_key_xml = sprintf($public_key_xml, Utils::b64url2b64($key->n), Utils::b64url2b64($key->e));
 
         $rsa = new RSA();
         $rsa->setHash($hashtype);
@@ -845,7 +852,7 @@ class OpenIdConnectClient
 
         $provider_match = $claims->iss === $this->getProviderUrl();
         $client_id_match = ($claims->aud === $this->clientId) || (in_array($this->clientId, $claims->aud));
-        $nonce_match = $claims->nonce === $this->getNonce();
+        $nonce_match = !property_exists($claims, 'nonce') || $claims->nonce === $this->getNonce();
         $claims_not_expired = !isset($claims->exp) || $claims->exp > time();
         $claims_nbf_okay = !isset($claims->nbf) || $claims->nbf < time();
         $claims_hash_match = !isset($claims->at_hash) || $claims->at_hash === $expected_at_hash;
@@ -1307,7 +1314,7 @@ class OpenIdConnectClient
      */
     protected function getNonce()
     {
-        return isset($_SESSION['openid_connect_nonce'])
+        return isset($_SESSION) && isset($_SESSION['openid_connect_nonce'])
             ? $_SESSION['openid_connect_nonce']
             : '';
     }
@@ -1319,6 +1326,10 @@ class OpenIdConnectClient
      */
     protected function unsetNonce()
     {
+        if (!isset($_SESSION)) {
+            return;
+        }
+
         unset($_SESSION['openid_connect_nonce']);
     }
 
@@ -1343,7 +1354,7 @@ class OpenIdConnectClient
      */
     protected function getState()
     {
-        return isset($_SESSION['openid_connect_state'])
+        return isset($_SESSION) && isset($_SESSION['openid_connect_state'])
             ? $_SESSION['openid_connect_state']
             : '';
     }
@@ -1355,7 +1366,20 @@ class OpenIdConnectClient
      */
     protected function unsetState()
     {
+        if (!isset($_SESSION)) {
+            return;
+        }
+
         unset($_SESSION['openid_connect_state']);
+    }
+
+    /**
+     * Get the claims - only set when authenticate has been called
+     *
+     * @return \stdClass
+     */
+    public function getClaims() {
+        return $this->claims;
     }
 
     /**
